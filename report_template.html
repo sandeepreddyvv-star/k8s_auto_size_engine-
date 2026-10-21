@@ -1,0 +1,623 @@
+<title>Kubernetes Right-Sizing</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one reading column of sections; workload sheets stacked like spec cards, tables scroll inside their own frame */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunk: #eaeef2; --ink: #15202b; --muted: #5a6876; --line: #d8dee5;
+  --accent: #0d6b88; --accent-soft: #dcecf2;
+  --good: #2c7a4b; --good-soft: #e1f1e7; --warn: #9a5c00; --warn-soft: #fbeed8; --crit: #b0271f; --crit-soft: #f9e2df;
+  --ref: #8795a3;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1317; --surface: #151c22; --sunk: #1b242c; --ink: #e4eaef; --muted: #95a3b0; --line: #29343e;
+  --accent: #5bb7d5; --accent-soft: #15323d;
+  --good: #63c58e; --good-soft: #15301f; --warn: #e6a74c; --warn-soft: #362712; --crit: #f2786d; --crit-soft: #3a1a17;
+  --ref: #6f7d8a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1317; --surface: #151c22; --sunk: #1b242c; --ink: #e4eaef; --muted: #95a3b0; --line: #29343e;
+  --accent: #5bb7d5; --accent-soft: #15323d;
+  --good: #63c58e; --good-soft: #15301f; --warn: #e6a74c; --warn-soft: #362712; --crit: #f2786d; --crit-soft: #3a1a17;
+  --ref: #6f7d8a; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 64px }
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 56px }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; text-wrap: balance; margin: 0; line-height: 1.15 }
+h1 { font-size: clamp(30px, 5vw, 44px); letter-spacing: -0.01em }
+h2 { font-size: 26px }
+h3 { font-size: 19px }
+p { margin: 0; max-width: 68ch }
+code, .mono { font-family: var(--f-mono); font-size: 0.92em }
+.num { font-variant-numeric: tabular-nums }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted) }
+.muted { color: var(--muted) }
+section { display: grid; gap: 20px; min-width: 0 }
+section > header { display: grid; gap: 6px }
+
+/* masthead */
+.mast { padding-top: 40px; display: grid; gap: 16px; border-bottom: 1px solid var(--line); padding-bottom: 28px }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font: 13px/1.4 var(--f-mono); color: var(--muted) }
+.meta b { color: var(--ink); font-weight: 500 }
+.banner { display: flex; gap: 12px; align-items: flex-start; background: var(--warn-soft); color: var(--ink);
+  border-radius: 6px; padding: 12px 16px; max-width: 80ch }
+.banner .ic { color: var(--warn); font-weight: 600; font-family: var(--f-mono) }
+
+/* summary */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden }
+.stat { background: var(--surface); padding: 18px 20px; display: grid; gap: 6px; align-content: start }
+.stat .v { font: 600 28px/1.1 var(--f-display); font-variant-numeric: tabular-nums }
+.stat .v small { font: 400 14px var(--f-body); color: var(--muted) }
+.stat .d { font-size: 13px; color: var(--muted) }
+.lede { display: grid; gap: 12px }
+.lede p { font-size: 16.5px }
+
+/* chips */
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--f-mono); padding: 5px 8px; border-radius: 4px;
+  white-space: nowrap; background: var(--sunk); color: var(--ink) }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ref) }
+.chip.good { background: var(--good-soft) } .chip.good::before { background: var(--good) }
+.chip.warn { background: var(--warn-soft) } .chip.warn::before { background: var(--warn) }
+.chip.crit { background: var(--crit-soft) } .chip.crit::before { background: var(--crit) }
+.chip.plain::before { display: none }
+.pri { font: 600 12px/1 var(--f-mono); padding: 5px 7px; border-radius: 4px; border: 1px solid currentColor }
+.pri.P1 { color: var(--crit) } .pri.P2 { color: var(--warn) } .pri.P3 { color: var(--muted) }
+
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface) }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font: 500 11.5px/1.3 var(--f-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); background: var(--sunk); white-space: nowrap }
+tr:last-child td { border-bottom: 0 }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+td .arrow { color: var(--muted); padding: 0 4px }
+.up { color: var(--crit) } .down { color: var(--good) }
+
+/* actions list */
+.actions { display: grid; gap: 10px }
+.act { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px }
+.act .what { display: grid; gap: 4px; min-width: 0 }
+.act .what b { font-weight: 600 }
+.act .scores { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end }
+@media (max-width: 640px) { .act { grid-template-columns: auto 1fr } .act .scores { grid-column: 1 / -1; justify-content: flex-start } }
+
+/* filter */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.filters button { font: 500 13px/1 var(--f-mono); padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); cursor: pointer }
+.filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface) }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+/* workload sheet */
+.sheets { display: grid; gap: 20px }
+.sheet { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: grid }
+.sheet > .top { padding: 18px 20px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--line) }
+.sheet .id { display: grid; gap: 4px; min-width: 0 }
+.sheet .id .path { font: 13px var(--f-mono); color: var(--muted); overflow-wrap: anywhere }
+.sheet .tags { display: flex; flex-wrap: wrap; gap: 6px }
+.sheet .body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 0 }
+.sheet .body > div { padding: 18px 20px; display: grid; gap: 16px; align-content: start; min-width: 0 }
+.sheet .body > div + div { border-left: 1px solid var(--line) }
+@media (max-width: 820px) { .sheet .body { grid-template-columns: minmax(0, 1fr) } .sheet .body > div + div { border-left: 0; border-top: 1px solid var(--line) } }
+.spec td, .spec th { padding: 7px 8px; font-size: 13.5px }
+.spec td:first-child { color: var(--muted) }
+.spec .rec { font-weight: 600 }
+.steps { font: 13px var(--f-mono); color: var(--muted) }
+.trade { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: 14px }
+.trade li { max-width: 72ch }
+.conf { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+@media (max-width: 480px) { .conf { grid-template-columns: 1fr } }
+.conf > div { background: var(--sunk); border-radius: 6px; padding: 12px; display: grid; gap: 8px; align-content: start }
+.score { display: flex; align-items: baseline; gap: 8px }
+.score .big { font: 600 26px/1 var(--f-display); font-variant-numeric: tabular-nums }
+.meter { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px }
+.meter i { height: 6px; border-radius: 1px; background: var(--line) }
+.conf ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 12.5px; color: var(--muted) }
+.conf ul li { display: grid; grid-template-columns: 2.4em 1fr; gap: 4px }
+.conf ul li span:first-child { font-family: var(--f-mono); color: var(--ink) }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px 14px }
+.kv div { display: grid; gap: 2px }
+.kv dt { font: 500 11px var(--f-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted) }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 14px }
+dl { margin: 0 }
+
+/* charts */
+.chart { display: grid; gap: 6px; position: relative }
+.chart .cap { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--muted) }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible }
+.chart .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font: 12px/1.35 var(--f-mono);
+  padding: 6px 8px; border-radius: 4px; white-space: nowrap; transform: translate(-50%, -110%); z-index: 2 }
+.chart .tip[hidden] { display: none }
+
+/* rubric, rollout */
+.cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; display: grid; gap: 12px; align-content: start; min-width: 0 }
+.panel ul, .panel ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px }
+.phases { display: grid; gap: 12px; counter-reset: ph }
+.phase { display: grid; grid-template-columns: 44px 1fr; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px }
+.phase .k { font: 600 22px/1 var(--f-display); color: var(--accent) }
+.phase .c { display: grid; gap: 6px; min-width: 0 }
+.phase ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px }
+pre.yaml { margin: 0; background: var(--sunk); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.5 var(--f-mono) }
+details { border-top: 1px solid var(--line); padding-top: 10px }
+summary { cursor: pointer; font: 500 13px var(--f-mono); color: var(--accent) }
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 20px }
+@media (prefers-reduced-motion: no-preference) { .filters button { transition: background .15s, color .15s } }
+</style>
+
+<div class="wrap" id="app"></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+
+const GiB = 2 ** 30, MiB = 2 ** 20;
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fCpu = c => c == null ? '—' : c < 1 ? `${Math.round(c * 1000)}m` : `${+c.toFixed(2)}`;
+const fMem = b => b == null ? '—' : b >= GiB ? `${+(b / GiB).toFixed(2)} GiB` : `${Math.round(b / MiB)} MiB`;
+const fDate = s => s.slice(0, 10);
+const signed = (v, d = 1) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(d);
+const band = s => s >= 8 ? 'good' : s >= 5 ? 'warn' : 'crit';
+const bandWord = s => s >= 8 ? 'high' : s >= 5 ? 'medium' : 'low';
+
+const days = D => `${+D.window.days.toFixed(1)} days`;
+const names = (cs, n = 4) => {
+  const u = [...new Set(cs.map(c => c.workload))];
+  const shown = u.slice(0, n).map(w => `<b>${esc(w)}</b>`);
+  if (u.length > n) shown.push(`${u.length - n} more`);
+  return shown.length < 2 ? shown.join('') : shown.slice(0, -1).join(', ') + ' and ' + shown[shown.length - 1];
+};
+const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+
+function confChip(label, s) { return `<span class="chip ${band(s)}" title="${bandWord(s)} confidence">${label} ${s}/10</span>`; }
+function actWord(a) {
+  const cls = a.startsWith('increase') ? 'up' : a.startsWith('decrease') ? 'down' : 'muted';
+  return `<span class="${cls}">${esc(a)}</span>`;
+}
+
+/* ---------- small line chart: one series, labelled reference lines, hover readout ---------- */
+let chartId = 0;
+function lineChart({ values, labels, refs, fmt, caption, unitNote }) {
+  const id = 'ch' + (++chartId);
+  const W = 340, H = 130, L = 4, R = 64, T = 10, B = 20;
+  const hi = Math.max(...values, ...refs.map(r => r.v).filter(v => v != null)) * 1.12 || 1;
+  const x = i => L + (W - L - R) * (values.length === 1 ? 0.5 : i / (values.length - 1));
+  const y = v => T + (H - T - B) * (1 - v / hi);
+  const pts = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const area = `M${x(0)},${y(0)} L${pts.split(' ').join(' L')} L${x(values.length - 1)},${y(0)} Z`;
+  const grid = [0.25, 0.5, 0.75, 1].map(f => `<line x1="${L}" x2="${W - R}" y1="${y(hi / 1.12 * f)}" y2="${y(hi / 1.12 * f)}" stroke="var(--line)" stroke-width="1"/>`).join('');
+  // keep reference labels from colliding
+  const placed = [];
+  const refSvg = refs.filter(r => r.v != null).sort((a, b) => b.v - a.v).map(r => {
+    let ly = y(r.v) + 4;
+    for (const p of placed) if (Math.abs(p - ly) < 12) ly = p + 12;
+    placed.push(ly);
+    return `<line x1="${L}" x2="${W - R}" y1="${y(r.v)}" y2="${y(r.v)}" stroke="${r.color}" stroke-width="${r.w || 1.5}" ${r.dash ? 'stroke-dasharray="4 3"' : ''}/>
+      <text x="${W - R + 6}" y="${ly}" font-size="10.5" font-family="var(--f-mono)" fill="var(--muted)">${esc(r.label)}</text>`;
+  }).join('');
+  const xt = [0, Math.floor((values.length - 1) / 2), values.length - 1].map(i =>
+    `<text x="${x(i)}" y="${H - 4}" font-size="10.5" font-family="var(--f-mono)" fill="var(--muted)" text-anchor="${i === 0 ? 'start' : i === values.length - 1 ? 'end' : 'middle'}">${esc(labels[i])}</text>`).join('');
+  return `<div class="chart" id="${id}" data-chart='${esc(JSON.stringify({ values, labels, W, L, R, T, B, H, hi, unit: unitNote }))}'>
+    <div class="cap"><span>${esc(caption)}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(caption)}">
+      ${grid}
+      <path d="${area}" fill="var(--accent-soft)"/>
+      <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      ${refSvg}${xt}
+      <line class="xh" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>
+      <circle class="dot" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+      <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" class="hit"/>
+    </svg>
+    <div class="tip" hidden></div>
+  </div>`;
+}
+function wireCharts(root) {
+  root.querySelectorAll('.chart[data-chart]').forEach(el => {
+    const d = JSON.parse(el.dataset.chart);
+    const svg = $('svg', el), tip = $('.tip', el), xh = $('.xh', el), dot = $('.dot', el), hit = $('.hit', el);
+    const fmt = d.unit === 'cpu' ? fCpu : v => `${Math.round(v)} MiB`;
+    const show = ev => {
+      const r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) * d.W / r.width;
+      const n = d.values.length, i = Math.max(0, Math.min(n - 1, Math.round((sx - d.L) / (d.W - d.L - d.R) * (n - 1))));
+      const px = d.L + (d.W - d.L - d.R) * (n === 1 ? 0.5 : i / (n - 1)), py = d.T + (d.H - d.T - d.B) * (1 - d.values[i] / d.hi);
+      xh.setAttribute('x1', px); xh.setAttribute('x2', px); xh.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', px); dot.setAttribute('cy', py); dot.setAttribute('visibility', 'visible');
+      tip.hidden = false; tip.textContent = `${d.labels[i]}  ${fmt(d.values[i])}`;
+      tip.style.left = (px / d.W * r.width) + 'px'; tip.style.top = (py / d.H * r.height + $('.cap', el).offsetHeight + 6) + 'px';
+    };
+    const hide = () => { tip.hidden = true; xh.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); };
+    hit.addEventListener('pointermove', show); hit.addEventListener('pointerleave', hide);
+  });
+}
+
+/* ---------- sections ---------- */
+function masthead(D) {
+  const stale = D.window.stale_days;
+  const growing = D.containers.filter(c => c.flags.mem_growing);
+  return `<header class="mast">
+    <span class="eyebrow">Kubernetes resource review · ${esc(D.cluster.join(', '))}</span>
+    <h1>${esc(D.cluster.length > 2 ? `${D.cluster.length} clusters` : D.cluster.join(' and '))} Right-Sizing</h1>
+    <p class="lede-p">CPU and memory requests, limits and namespace quotas for ${plural(D.containers.length, 'container')} in ${plural(D.namespaces.length, 'namespace')},
+      sized from ${days(D)} of ${esc(D.interval_label)} samples. Each recommendation has separate CPU and memory confidence scores, the reasoning behind them and the trade-offs to weigh.</p>
+    <div class="meta">
+      <span>source <b>${esc(D.source)}</b></span>
+      <span>window <b>${fDate(D.window.start)} → ${fDate(D.window.end)}</b></span>
+      <span>samples <b class="num">${D.samples.toLocaleString()}</b></span>
+      <span>generated <b>${esc(D.generated)}</b></span>
+      <span>profile <b>conservative</b></span>
+    </div>
+    ${stale > D.assumptions.stale_after_days ? `<div class="banner"><span class="ic">!</span><p>The data ends ${stale} days before this report. Workloads change; re-run
+      <code>analyze.py</code> on a fresh 14-day export before applying anything${growing.length ? `, and check whether ${names(growing)} ${growing.length === 1 ? 'has' : 'have'} already hit ${growing.length === 1 ? 'its' : 'their'} memory limit` : ''}.</p></div>` : ''}
+  </header>`;
+}
+
+function lede(D) {
+  const T = D.totals, C = D.containers;
+  const short = [];
+  for (const c of C.filter(c => c.priority === 'P1')) {
+    const f = c.flags;
+    const multi = C.some(o => o !== c && o.workload === c.workload && o.ns_label === c.ns_label);
+    if (f.cpu_censored) short.push(`<b>${esc(c.workload)}</b>${multi ? ` / ${esc(c.container)}` : ''} loses ${Math.round(c.throttle_ratio * 100)}% of its CPU time to throttling`);
+    else if (f.mem_censored) {
+      const oom = c.termination_reasons.OOMKilled || 0;
+      short.push(`<b>${esc(c.workload)}</b> ${oom ? `was OOMKilled ${plural(oom, 'time')}` : 'sits'} at its ${esc(c.spec.raw.mem_limit || 'memory')} limit`);
+    } else if (f.mem_growing) short.push(`<b>${esc(c.workload)}</b> memory grows about ${Math.round(c.mem_slope_mib_day)} MiB a day toward its limit`);
+  }
+  const list = short.length < 2 ? short.join('') : short.slice(0, -1).join(', ') + ', and ' + short[short.length - 1];
+  const batch = C.filter(c => c.flags.tier === 'batch' && c.delta.cpu_cores > 0.5).sort((a, b) => b.delta.cpu_cores - a.delta.cpu_cores)[0];
+  const saver = [...C].filter(c => c.delta.cpu_cores < 0).sort((a, b) => a.delta.cpu_cores - b.delta.cpu_cores)[0];
+  const saverText = saver ? `over-provisioned workloads such as <b>${esc(saver.workload)}</b>, which reserves ${+(saver.spec.cpu_request * saver.replicas.avg).toFixed(1)} cores
+    across ${plural(Math.round(saver.replicas.avg), 'pod')} and peaks around ${+(saver.cpu.p95 * saver.replicas.avg).toFixed(1)}` : '';
+  const net = T.cpu_rec - T.cpu_now;
+  let p1;
+  if (!short.length) {
+    p1 = `No workload is short of resources today. ${saver ? `Most of the change is reclaiming capacity from ${saverText}, for a net ${signed(net)} cores.` : `The net change is ${signed(net)} cores.`}`;
+  } else {
+    const fixes = `${plural(short.length, 'workload is', 'workloads are')} short of resources today: ${list}.`;
+    const extra = batch ? `, plus reserving enough for the <b>${esc(batch.workload)}</b> run (${signed(batch.delta.cpu_cores)} cores on its own),` : '';
+    p1 = net > 0
+      ? `This review does not cut costs overall. ${fixes} Fixing ${short.length === 1 ? 'it' : 'them'}${extra} outweighs the savings${saver ? ` from ${saverText}` : ''}.`
+      : `${fixes} Fixing ${short.length === 1 ? 'it' : 'them'}${extra} costs less than the savings${saver ? ` from ${saverText}` : ''}, for a net ${signed(net)} cores.`;
+  }
+  return `<p>${p1}</p>`;
+}
+
+function summary(D) {
+  const T = D.totals, C = D.containers;
+  const inc = C.filter(c => c.delta.cpu_cores > 0).reduce((a, c) => a + c.delta.cpu_cores, 0);
+  const dec = C.filter(c => c.delta.cpu_cores < 0).reduce((a, c) => a + c.delta.cpu_cores, 0);
+  const p1 = C.filter(c => c.priority === 'P1');
+  const avg = k => (C.reduce((a, c) => a + c[k].score, 0) / C.length).toFixed(1);
+  const cuts = D.namespaces.filter(n => n.reserved_rec.mem_gib < n.reserved_now.mem_gib).map(n => esc(n.label));
+  const raises = D.namespaces.filter(n => n.reserved_rec.mem_gib > n.reserved_now.mem_gib).map(n => esc(n.label));
+  const memNote = !cuts.length ? (raises.length ? `raised in ${raises.join(', ')}` : 'no namespace changes')
+    : !raises.length ? `cut in ${cuts.join(', ')}`
+    : T.mem_rec <= T.mem_now ? `cuts in ${cuts.join(', ')} outweigh the raises elsewhere` : `cuts in ${cuts.join(', ')} offset part of the raises elsewhere`;
+  return `<section>
+    <header><span class="eyebrow">Summary</span><h2>Fix what is breaking first, then take the savings</h2></header>
+    <div class="stats">
+      <div class="stat"><span class="eyebrow">CPU reserved</span><span class="v num">${T.cpu_now} → ${T.cpu_rec} <small>cores</small></span>
+        <span class="d">${signed(inc)} cores added where usage is capped or underserved, ${signed(dec)} freed elsewhere</span></div>
+      <div class="stat"><span class="eyebrow">Memory reserved</span><span class="v num">${T.mem_now} → ${T.mem_rec} <small>GiB</small></span>
+        <span class="d">${signed(T.mem_rec - T.mem_now)} GiB net: ${memNote}</span></div>
+      <div class="stat"><span class="eyebrow">Urgent (P1)</span><span class="v num">${p1.length} <small>${p1.length === 1 ? 'container' : 'containers'}</small></span>
+        <span class="d">${p1.length ? [...new Set(p1.map(c => esc(c.workload)))].join(', ') : 'nothing is failing or about to fail'}</span></div>
+      <div class="stat"><span class="eyebrow">Mean confidence</span><span class="v num">${avg('confidence_cpu')} / ${avg('confidence_mem')} <small>CPU / mem</small></span>
+        <span class="d">Out of 10. Lowest scores are where the data cannot see real demand</span></div>
+    </div>
+    <div class="lede">
+      ${lede(D)}
+      <p>All values use the conservative profile. The balanced profile would reserve ${Math.abs(T.cpu_balanced_delta - (T.cpu_rec - T.cpu_now)).toFixed(1)} fewer cores
+        and ${Math.abs(T.mem_balanced_delta - (T.mem_rec - T.mem_now)).toFixed(1)} fewer GiB, with less headroom for spikes (see <a href="#compare">the comparison</a>).
+        The primary policy sets no CPU limits. Every container also lists the CPU limit to use where policy requires one.</p>
+    </div>
+  </section>`;
+}
+
+function actions(D) {
+  const order = { P1: 0, P2: 1, P3: 2 };
+  const C = [...D.containers].sort((a, b) => order[a.priority] - order[b.priority] || a.confidence_cpu.score - b.confidence_cpu.score);
+  const what = c => {
+    const r = c.rec.fmt, s = c.spec.raw;
+    const cpu = `CPU request ${s.cpu_request || 'none'} → ${r.cpu_request}`;
+    const mem = `memory ${s.mem_request}/${s.mem_limit || 'no limit'} → ${r.mem_request}/${r.mem_limit}`;
+    return `${cpu}; ${mem}`;
+  };
+  return `<section id="actions">
+    <header><span class="eyebrow">Action list</span><h2>What to change, in order</h2>
+      <p class="muted">P1 fixes something failing or about to fail. P2 needs investigation or a decision first. P3 is a safe resize, mostly reclaiming capacity.</p></header>
+    <div class="actions">${C.map(c => `<div class="act">
+      <span class="pri ${c.priority}">${c.priority}</span>
+      <div class="what"><b>${esc(c.workload)} <span class="muted mono">/ ${esc(c.container)} · ${esc(c.ns_label)}</span></b>
+        <span class="mono" style="font-size:13px">${esc(what(c))}</span>
+        <span class="muted" style="font-size:13.5px">${esc(c.class)} · CPU ${actWord(c.action_cpu)} · memory ${actWord(c.action_mem)}</span></div>
+      <div class="scores">${confChip('CPU', c.confidence_cpu.score)}${confChip('MEM', c.confidence_mem.score)}</div>
+    </div>`).join('')}</div>
+  </section>`;
+}
+
+function method(D) {
+  const P = D.assumptions.profiles.conservative;
+  const tiers = Object.keys(D.assumptions.tiers || {}).length;
+  return `<section id="method">
+    <header><span class="eyebrow">Method</span><h2>How the numbers are set and scored</h2></header>
+    <div class="cols2">
+      <div class="panel"><h3>Sizing rules (conservative)</h3><ul>
+        <li><b>CPU request:</b> p${P.cpu_lat_pct * 100} of ${esc(D.interval_label)} usage × ${P.cpu_headroom} for latency-sensitive services, p${P.cpu_bg_pct * 100} × ${P.cpu_headroom} for background workers, and p95 of the busy window × ${P.cpu_headroom} for batch.
+          ${tiers ? `Tiers come from the config file (${plural(tiers, 'entry', 'entries')}); unlisted` : 'No tiers were configured, so'} CronJobs and Jobs count as batch and everything else as latency-sensitive.</li>
+        <li><b>CPU limit:</b> none by default, so no throttling. If policy requires one: at least ${D.assumptions.cpu_limit_mult}× the request and ${D.assumptions.cpu_limit_peak_mult}× the highest observed rate.</li>
+        <li><b>Memory request:</b> observed max × ${P.mem_req_mult}. <b>Memory limit:</b> observed max × ${P.mem_lim_mult}. Setting the limit equal to the request gives Guaranteed QoS instead.</li>
+        <li><b>Capped by the current limit</b> (throttled over ${D.assumptions.throttle_censored * 100}% or memory at ${D.assumptions.mem_at_limit * 100}% of limit): observed usage is a floor, so the value is raised and must be re-measured.</li>
+        <li><b>Growing memory:</b> the request never shrinks, and the limit covers ${D.assumptions.leak_runway_days} more days of growth × 1.25.</li>
+        <li><b>Autoscaled (HPA):</b> the CPU request is not lowered, because the HPA scales on usage as a percentage of the request.</li>
+        <li><b>Cuts</b> deeper than ${(1 - P.step_cap) * 100}% are split into steps. Values round to 50m / 64Mi steps.</li>
+      </ul></div>
+      <div class="panel"><h3>Confidence score (1–10)</h3>
+        <p class="muted" style="font-size:14px">Scored separately for CPU and memory. Starts at 10 and loses points for each issue below. Every workload sheet lists the deductions it received.</p>
+        <div class="tbl"><table><thead><tr><th>Factor</th><th class="n">Points</th></tr></thead><tbody>
+          <tr><td>Usage capped by the current limit (throttling or OOMKills)</td><td class="n">−3 to −5</td></tr>
+          <tr><td>Memory still growing (memory only)</td><td class="n">−4</td></tr>
+          <tr><td>Less than 13 days of history</td><td class="n">−2 to −3</td></tr>
+          <tr><td>Non-OOM crashes</td><td class="n">−1 to −2</td></tr>
+          <tr><td>Bursty, or ${esc(D.interval_label)} samples hide spikes (CPU only)</td><td class="n">−1 to −2</td></tr>
+          <tr><td>HPA config not provided (CPU only)</td><td class="n">−1</td></tr>
+          <tr><td>Gaps, counter resets, rare peaks, single replica, odd lifecycle</td><td class="n">−1 each</td></tr>
+          <tr><td>Data older than ${D.assumptions.stale_after_days} days</td><td class="n">−1</td></tr>
+        </tbody></table></div>
+        <p style="font-size:14px"><span class="chip good">8–10</span> apply as written · <span class="chip warn">5–7</span> apply and re-measure in a week · <span class="chip crit">1–4</span> a first step, not a final value</p>
+      </div>
+    </div>
+  </section>`;
+}
+
+function sheet(c, D) {
+  const s = c.spec, r = c.rec, rf = r.fmt, raw = s.raw;
+  const row = (label, cur, rec, note = '') => `<tr><td>${label}</td><td class="n">${esc(cur || '—')}</td><td class="arrow">→</td><td class="n rec">${esc(rec)}</td><td class="muted" style="font-size:12.5px">${note}</td></tr>`;
+  const steps = (rf.cpu_steps.length > 1 || rf.mem_steps.length > 1)
+    ? `<p class="steps">Step plan · CPU ${rf.cpu_steps.join(' → ')} · memory ${rf.mem_steps.join(' → ')}</p>` : '';
+  const hours = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
+  const cpuChart = lineChart({
+    values: c.cpu_hourly_p95, labels: hours, unitNote: 'cpu',
+    caption: `CPU by hour of day (UTC), p95 of ${D.interval_label} usage, cores`,
+    refs: [
+      { v: s.cpu_limit, label: `limit ${fCpu(s.cpu_limit)}`, color: 'var(--crit)', dash: true, w: 1 },
+      { v: s.cpu_request, label: `now ${fCpu(s.cpu_request)}`, color: 'var(--ref)', dash: true },
+      { v: r.cpu_request, label: `new ${fCpu(r.cpu_request)}`, color: 'var(--ink)' },
+    ],
+  });
+  const days = c.mem_daily_max_mib.map((_, i) => `day ${i + 1}`);
+  const memChart = lineChart({
+    values: c.mem_daily_max_mib, labels: days, unitNote: 'mem',
+    caption: 'Memory, daily max working set, MiB',
+    refs: [
+      { v: s.mem_limit && s.mem_limit / MiB, label: `limit ${fMem(s.mem_limit)}`, color: 'var(--crit)', dash: true, w: 1 },
+      { v: r.mem_limit / MiB, label: `new lim ${fMem(r.mem_limit)}`, color: 'var(--ink)' },
+      { v: r.mem_request / MiB, label: `new req ${fMem(r.mem_request)}`, color: 'var(--ref)' },
+    ],
+  });
+  const confBox = (label, k) => {
+    const x = c[k];
+    return `<div><span class="eyebrow">${label} confidence</span>
+      <div class="score"><span class="big">${x.score}</span><span class="muted">/ 10 · ${bandWord(x.score)}</span></div>
+      <div class="meter" aria-hidden="true">${Array.from({ length: 10 }, (_, i) => `<i style="background:${i < x.score ? `var(--${band(x.score)})` : ''}"></i>`).join('')}</div>
+      <ul>${x.reasons.length ? x.reasons.map((t, i) => `<li><span>${x.points[i]}</span><span>${esc(t)}</span></li>`).join('') : '<li><span>0</span><span>no deductions</span></li>'}</ul></div>`;
+  };
+  return `<article class="sheet" data-ns="${esc(c.ns_label)}" id="${esc(`w-${c.ns_label}-${c.workload}-${c.container}`.replace(/[^\w-]/g, '-'))}">
+    <div class="top">
+      <div class="id"><h3>${esc(c.workload)} <span class="muted" style="font-weight:500">/ ${esc(c.container)}</span></h3>
+        <span class="path">${esc(c.ns_label)} · ${esc(c.kind)} · ${c.replicas.avg} avg / ${c.replicas.peak} peak replicas${c.replicas.distinct_pods > c.replicas.peak ? ` · ${c.replicas.distinct_pods} pods seen` : ''} · ${c.history_days} days</span></div>
+      <div class="tags"><span class="pri ${c.priority}">${c.priority}</span><span class="chip plain">${esc(c.class)}</span>
+        ${confChip('CPU', c.confidence_cpu.score)}${confChip('MEM', c.confidence_mem.score)}</div>
+    </div>
+    <div class="body">
+      <div>
+        <div class="tbl" style="border:0"><table class="spec"><thead><tr><th></th><th class="n">Now</th><th></th><th class="n">Recommended</th><th></th></tr></thead><tbody>
+          ${row('CPU request', raw.cpu_request, rf.cpu_request, actWord(c.action_cpu))}
+          ${row('CPU limit', raw.cpu_limit, 'none', `if required: <span class="mono">${esc(rf.cpu_limit_alt)}</span>`)}
+          ${row('Memory request', raw.mem_request, rf.mem_request, actWord(c.action_mem))}
+          ${row('Memory limit', raw.mem_limit, rf.mem_limit, `Guaranteed option: request = <span class="mono">${esc(rf.mem_limit)}</span>`)}
+          <tr><td>QoS class</td><td class="n">${c.qos.current}</td><td class="arrow">→</td><td class="n rec">${c.qos.primary}</td><td></td></tr>
+        </tbody></table></div>
+        ${steps}
+        <div><span class="eyebrow">Trade-offs and notes</span>
+          <ul class="trade">${c.tradeoffs.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>
+        <div class="conf">${confBox('CPU', 'confidence_cpu')}${confBox('Memory', 'confidence_mem')}</div>
+      </div>
+      <div>
+        ${cpuChart}
+        ${memChart}
+        <dl class="kv">
+          <div><dt>CPU p50</dt><dd>${fCpu(c.cpu.p50)}</dd></div><div><dt>CPU p95</dt><dd>${fCpu(c.cpu.p95)}</dd></div>
+          <div><dt>CPU p99</dt><dd>${fCpu(c.cpu.p99)}</dd></div><div><dt>CPU max</dt><dd>${fCpu(c.cpu.max)}</dd></div>
+          <div><dt>Throttled</dt><dd>${(c.throttle_ratio * 100).toFixed(1)}%</dd></div><div><dt>Mem p50</dt><dd>${fMem(c.mem.p50)}</dd></div>
+          <div><dt>Mem max</dt><dd>${fMem(c.mem.max)}</dd></div><div><dt>Mem trend</dt><dd>${signed(c.mem_slope_mib_day, 0)} MiB/day</dd></div>
+          <div><dt>Restarts</dt><dd>${c.restarts}${Object.keys(c.termination_reasons).length ? ' · ' + esc(Object.entries(c.termination_reasons).map(([k, v]) => `${k} ${v}`).join(', ')) : ''}</dd></div>
+        </dl>
+      </div>
+    </div>
+  </article>`;
+}
+
+function workloads(D) {
+  const ns = ['all', ...D.namespaces.map(n => n.label)];
+  return `<section id="workloads">
+    <header><span class="eyebrow">Workloads</span><h2>Recommendation sheets</h2>
+      <p class="muted">Charts show ${days(D)}. CPU is drawn by hour of day; memory is the highest value each day. Dashed lines are today's settings and solid lines the recommendation. Hover a chart to read values.</p></header>
+    <div class="filters" role="group" aria-label="Filter by namespace">${ns.map(n => `<button type="button" data-ns="${esc(n)}" aria-pressed="${n === 'all'}">${esc(n)}</button>`).join('')}</div>
+    <div class="sheets">${D.containers.map(c => sheet(c, D)).join('')}</div>
+  </section>`;
+}
+
+function quotas(D) {
+  const N = D.namespaces;
+  const yaml = n => `apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ${n.namespace}-compute
+  namespace: ${n.namespace}
+spec:
+  hard:
+${Object.entries(n.quota).map(([k, v]) => `    ${k}: "${v}"`).join('\n')}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ${n.namespace}-defaults
+  namespace: ${n.namespace}
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: "${n.limitrange.defaultRequest.cpu}", memory: "${n.limitrange.defaultRequest.memory}" }
+      default: { memory: "${n.limitrange.default.memory}" }
+      max: { memory: "${n.limitrange.max.memory}" }`;
+  return `<section id="quotas">
+    <header><span class="eyebrow">Namespaces</span><h2>ResourceQuota and LimitRange</h2>
+      <p class="muted">Each quota is sized as recommended requests × peak replicas, plus rolling-update surge (${Math.round(D.assumptions.max_surge * 100)}% for Deployments), × ${D.assumptions.profiles.conservative.quota_buffer} buffer.
+        The final quota is lower than today's reservations in some namespaces, so apply the <b>transition</b> quota first and switch to the final one after the last resize step. Otherwise the quota blocks the rollout.
+        <code>limits.cpu</code> is left out by default: setting it forces every pod in the namespace to declare a CPU limit.</p></header>
+    <div class="tbl"><table><thead><tr>
+      <th>Namespace</th><th class="n">requests.cpu</th><th class="n">requests.memory</th><th class="n">limits.memory</th><th class="n">pods</th>
+      <th class="n">Transition cpu / mem</th><th class="n">limits.cpu if required</th><th class="n">Reserved now → rec</th><th>Confidence</th></tr></thead><tbody>
+      ${N.map(n => `<tr><td><b>${esc(n.label)}</b><br><span class="muted" style="font-size:12.5px">${n.workloads.map(esc).join(', ')}</span></td>
+        <td class="n mono">${n.quota['requests.cpu']}</td><td class="n mono">${n.quota['requests.memory']}</td><td class="n mono">${n.quota['limits.memory']}</td><td class="n mono">${n.quota.pods}</td>
+        <td class="n mono">${n.quota_transition['requests.cpu']} / ${n.quota_transition['requests.memory']}</td><td class="n mono">${n.quota_cpu_limit_alt}</td>
+        <td class="n">${n.reserved_now.cpu} → ${n.reserved_rec.cpu} cores<br>${n.reserved_now.mem_gib} → ${n.reserved_rec.mem_gib} GiB</td>
+        <td>${confChip('CPU', n.confidence_cpu)} ${confChip('MEM', n.confidence_mem)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted" style="font-size:13.5px">A namespace's confidence is the lowest of its containers'. A quota is only as trustworthy as its weakest workload estimate.
+      LimitRange defaults (${esc(D.assumptions.limitrange.default_request_cpu)} / ${esc(D.assumptions.limitrange.default_request_memory)} requests, ${esc(D.assumptions.limitrange.default_memory_limit)} memory limit) only apply to containers that declare nothing, so new deployments without requests stop landing as BestEffort.</p>
+    <details><summary>Show the final quota YAML per namespace</summary>
+      <div style="display:grid;gap:12px;margin-top:12px">${N.map(n => `<pre class="yaml">${esc(yaml(n))}</pre>`).join('')}</div></details>
+  </section>`;
+}
+
+function rollout(D) {
+  const C = D.containers, by = p => C.filter(c => c.priority === p);
+  const li = c => `<li><b>${esc(c.workload)}</b>/${esc(c.container)}: ${esc(c.class.toLowerCase())}</li>`;
+  const ul = cs => cs.length ? `<ul>${cs.map(li).join('')}</ul>` : '<p class="muted" style="font-size:14px">Nothing in this group.</p>';
+  const p2 = by('P2'), wl = cs => [...new Set(cs.map(c => c.workload))];
+  const p2notes = [
+    ...wl(p2.filter(c => c.flags.crashing)).map(w => `Fix ${esc(w)}'s crash before resizing it.`),
+    ...wl(p2.filter(c => c.flags.kind_mismatch)).map(w => `Confirm how ${esc(w)} is deployed, then pick its reservation option.`),
+    ...wl(p2.filter(c => c.flags.no_mem_limit && !c.flags.crashing && !c.flags.kind_mismatch)).map(w => `Set ${esc(w)}'s memory limit now.`),
+  ].join(' ');
+  const hpa = wl(C.filter(c => c.flags.hpa));
+  return `<section id="rollout">
+    <header><span class="eyebrow">Rollout</span><h2>Order of changes and what to watch</h2></header>
+    <div class="phases">
+      <div class="phase"><span class="k">1</span><div class="c"><b>Week 1: stop the failures (P1)</b>
+        ${ul(by('P1'))}
+        <p class="muted" style="font-size:14px">Apply the transition quotas first. Raise these one workload at a time, then collect a full clean week, because these values are estimates of hidden demand.</p></div></div>
+      <div class="phase"><span class="k">2</span><div class="c"><b>Week 1–2: investigate and decide (P2)</b>
+        ${ul(p2)}
+        ${p2notes ? `<p class="muted" style="font-size:14px">${p2notes}</p>` : ''}</div></div>
+      <div class="phase"><span class="k">3</span><div class="c"><b>Weeks 2–4: reclaim capacity (P3)</b>
+        ${ul(by('P3'))}
+        <p class="muted" style="font-size:14px">Follow each step plan and hold every step for at least 3 days, including a weekday peak. Change one workload per day so any regression is traceable.</p></div></div>
+      <div class="phase"><span class="k">4</span><div class="c"><b>After the last step: lock in</b>
+        <p style="font-size:14px">Switch to the final quotas, re-run <code>analyze.py</code> on a fresh export of at least 14 days, and compare it with this report. Workloads that scored under 5 get re-sized from the new data.</p></div></div>
+    </div>
+    <div class="tbl"><table><thead><tr><th>Signal</th><th>Watch</th><th>Roll back or step up when</th></tr></thead><tbody>
+      <tr><td>CPU throttling</td><td class="mono">container_cpu_cfs_throttled_periods_total / _periods_total</td><td>over 5% sustained for 15 min (only with CPU limits)</td></tr>
+      <tr><td>Memory headroom</td><td class="mono">working_set / limit</td><td>over 90% for 30 min, or any OOMKilled</td></tr>
+      <tr><td>CPU contention</td><td class="mono">usage / request, node CPU pressure</td><td>usage over 1.5× request at peak while the node is above 85% busy</td></tr>
+      <tr><td>Latency and errors</td><td>service p99 latency and 5xx rate (your SLO dashboards)</td><td>p99 up more than 10% or error budget burn above 2× after a change</td></tr>
+      <tr><td>Evictions and pending pods</td><td class="mono">kube_pod_status_reason{reason="Evicted"}, Pending pods</td><td>any eviction or a pod Pending more than 5 min due to quota or capacity</td></tr>
+      ${hpa.length ? `<tr><td>HPA behaviour</td><td>${hpa.map(esc).join(', ')} desired replicas</td><td>replica count changes by more than 30% at the same traffic</td></tr>` : ''}
+    </tbody></table></div>
+  </section>`;
+}
+
+function compare(D) {
+  const C = D.containers, B = D.assumptions.profiles.balanced;
+  return `<section id="compare">
+    <header><span class="eyebrow">Profiles</span><h2>Conservative vs balanced</h2>
+      <p class="muted">Balanced uses p${B.cpu_lat_pct * 100}/p${B.cpu_bg_pct * 100} CPU × ${B.cpu_headroom}, memory max × ${B.mem_req_mult} for requests and × ${B.mem_lim_mult} for limits, and a ${B.quota_buffer} quota buffer. It reserves less, but a traffic spike or a bad node has less room to absorb.</p></header>
+    <div class="tbl"><table><thead><tr><th>Workload / container</th><th class="n">CPU req: cons · bal</th><th class="n">Mem req: cons · bal</th><th class="n">Mem limit: cons · bal</th><th class="n">Reserved Δ vs now (cons · bal)</th></tr></thead><tbody>
+      ${C.map(c => `<tr><td>${esc(c.workload)} <span class="muted">/ ${esc(c.container)}</span></td>
+        <td class="n mono">${c.rec.fmt.cpu_request} · ${c.rec_balanced.fmt.cpu_request}</td>
+        <td class="n mono">${c.rec.fmt.mem_request} · ${c.rec_balanced.fmt.mem_request}</td>
+        <td class="n mono">${c.rec.fmt.mem_limit} · ${c.rec_balanced.fmt.mem_limit}</td>
+        <td class="n">${signed(c.delta.cpu_cores, 2)} · ${signed(c.delta.cpu_cores_balanced, 2)} cores<br>${signed(c.delta.mem_gib, 2)} · ${signed(c.delta.mem_gib_balanced, 2)} GiB</td></tr>`).join('')}
+    </tbody></table></div>
+  </section>`;
+}
+
+function missing(D) {
+  const C = D.containers, out = [];
+  if (D.window.stale_days > D.assumptions.stale_after_days)
+    out.push(`<b>A fresh export.</b> This data is ${D.window.stale_days} days old (−1 on every score).`);
+  const cpuCap = C.filter(c => c.flags.cpu_censored), memCap = C.filter(c => c.flags.mem_censored);
+  if (cpuCap.length || memCap.length) {
+    const low = Math.min(...[...cpuCap.map(c => c.confidence_cpu.score), ...memCap.map(c => c.confidence_mem.score)]);
+    out.push(`<b>Usage after removing the caps</b> on ${[cpuCap.length ? `${names(cpuCap)} (CPU)` : '', memCap.length ? `${names(memCap)} (memory)` : ''].filter(Boolean).join(' and ')}.
+      Only this lifts their scores (lowest ${low}/10).`);
+  }
+  const short = C.filter(c => c.flags.short_history);
+  if (short.length) out.push(`<b>More history</b> for ${names(short)}: at least 14 days, so a full second weekly cycle is visible.`);
+  const hpa = C.filter(c => c.flags.hpa_inferred);
+  if (hpa.length) out.push(`<b>HPA specs</b> (target, min/max replicas) for ${names(hpa)}, so the CPU request can be tuned together with the HPA target. Add them under <code>hpa</code> in the config file.`);
+  out.push('<b>Latency and error SLOs per service</b>, to confirm each change is safe, not just that usage fits.');
+  const big = [...C].sort((a, b) => b.rec.mem_request - a.rec.mem_request).slice(0, 2);
+  out.push(`<b>Node sizes and allocatable capacity</b>, to check that the new requests still pack well (the largest pods are ${names(big)}).`);
+  if (D.interval_seconds >= 60)
+    out.push(`<b>Sub-minute CPU data</b> (e.g. 15 s scrape). ${esc(D.interval_label)} averages hide short bursts, which matters if CPU limits are kept.`);
+  out.push('<b>Cost per core-hour and per GiB-hour</b>, to express the deltas in money.');
+  const odd = C.filter(c => c.flags.kind_mismatch), crash = C.filter(c => c.flags.crashing);
+  if (odd.length || crash.length)
+    out.push([odd.length ? `<b>The deployment manifests</b> for ${names(odd)} (scheduled vs long-running)` : '',
+              crash.length ? `${odd.length ? 'the' : '<b>The</b>'} <b>crash logs</b> for ${names(crash)}` : ''].filter(Boolean).join(' and ') + '.');
+  return out;
+}
+
+function appendix(D) {
+  const dq = Object.entries(D.data_quality);
+  const gaps = D.containers.filter(c => c.gaps).map(c => `${c.workload}: ${c.gaps} gap(s), ${c.gap_hours} h`);
+  return `<section id="data">
+    <header><span class="eyebrow">Appendix</span><h2>Data quality and what would raise confidence</h2></header>
+    <div class="cols2">
+      <div class="panel"><h3>Cleaning applied</h3>
+        <div class="tbl"><table><tbody>${dq.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.toLocaleString()}</td></tr>`).join('')}
+          ${gaps.map(g => `<tr><td>Collection gap: ${esc(g)}</td><td class="n">left unfilled</td></tr>`).join('')}
+          ${(D.skipped || []).map(s => `<tr><td>Skipped ${esc(s.workload)}/${esc(s.container)}: ${esc(s.reason)}</td><td class="n">not sized</td></tr>`).join('')}</tbody></table></div>
+        <p class="muted" style="font-size:13.5px">CPU values given as millicores ("500m") and cores ("0.5", "1.0") are converted to cores. Memory values in bytes, Mi (binary) and M (decimal) are converted to bytes.
+          Unparseable memory values are dropped, not set to zero. CPU rates skip the interval in which a restart resets the counter.</p></div>
+      <div class="panel"><h3>Missing inputs, by impact</h3><ol>${missing(D).map(m => `<li>${m}</li>`).join('')}</ol>
+      <p class="muted" style="font-size:13.5px">A useful cross-check: run the Vertical Pod Autoscaler in recommendation-only mode (<code>updateMode: "Off"</code>) for two weeks and compare its targets with these.</p></div>
+    </div>
+  </section>`;
+}
+
+function files() {
+  return `<footer>
+    <p>Regenerate with <code>python analyze.py &lt;export.csv&gt; --config &lt;config.json&gt; --asof YYYY-MM-DD</code>. It writes <code>out/recommendations.csv</code>, <code>out/recommendations.json</code>,
+      <code>out/manifests/&lt;namespace&gt;.yaml</code> (resource patches, ResourceQuota, LimitRange) and this report. All thresholds are named constants at the top of the script; facts about your environment go in the config file.</p>
+  </footer>`;
+}
+
+function render() {
+  const app = $('#app');
+  if (!DATA) { app.innerHTML = '<p>No data embedded. Run analyze.py to generate this report.</p>'; return; }
+  document.title = `${DATA.cluster.length > 2 ? `${DATA.cluster.length} clusters` : DATA.cluster.join(' and ')} Right-Sizing`;
+  app.innerHTML = masthead(DATA) + summary(DATA) + actions(DATA) + workloads(DATA) + quotas(DATA) + rollout(DATA) + compare(DATA) + method(DATA) + appendix(DATA) + files();
+  wireCharts(app);
+  const btns = app.querySelectorAll('.filters button');
+  const apply = ns => {
+    btns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ns === ns)));
+    app.querySelectorAll('.sheet').forEach(s => { s.hidden = ns !== 'all' && s.dataset.ns !== ns; });
+    try { localStorage.setItem('ns-filter', ns); } catch (e) {}
+  };
+  btns.forEach(b => b.addEventListener('click', () => apply(b.dataset.ns)));
+  let saved = 'all';
+  try { saved = localStorage.getItem('ns-filter') || 'all'; } catch (e) {}
+  if ([...btns].some(b => b.dataset.ns === saved)) apply(saved);
+}
+render();
+</script>

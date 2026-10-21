@@ -1,0 +1,23 @@
+{
+  "$comment": "Config for the demo export. Copy it and replace the names with your own workloads.",
+  "workload_tiers": {
+    "api-gateway": "latency",
+    "checkout-service": "latency",
+    "inference-router": "latency",
+    "recommendation-api": "latency",
+    "session-cache": "latency",
+    "feature-store": "latency",
+    "notification-worker": "background",
+    "metrics-aggregator": "background",
+    "batch-embedder": "batch"
+  },
+  "hpa": {},
+  "hpa_target_utilization": 0.70,
+  "injected_sidecars": [],
+  "limitrange": {
+    "default_request_cpu": "100m",
+    "default_request_memory": "128Mi",
+    "default_memory_limit": "512Mi"
+  },
+  "stale_after_days": 30
+}

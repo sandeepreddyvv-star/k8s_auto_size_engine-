@@ -1,0 +1,7 @@
+# generated output
+/out/
+__pycache__/
+
+# real cluster exports contain internal names: keep them out of the repo (examples/ is tracked)
+/*.csv
+/*.csv.gz
